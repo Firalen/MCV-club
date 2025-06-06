@@ -4,6 +4,7 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const dns = require('dns');
 
 // Load environment variables
 dotenv.config();
@@ -18,13 +19,48 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-mongoose.connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-})
-.then(() => {
-    console.log("Connected to MongoDB");
-})  
+// Configure DNS to use Google's servers
+console.log("Configuring DNS servers...");
+dns.setServers(['8.8.8.8', '8.8.4.4']);
+
+// MongoDB connection with improved settings
+console.log("Setting up MongoDB connection...");
+
+const connectWithRetry = async () => {
+    try {
+        await mongoose.connect(process.env.MONGO_URI, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+            serverSelectionTimeoutMS: 5000,
+            socketTimeoutMS: 45000,
+            connectTimeoutMS: 10000,
+            family: 4
+        });
+        console.log("✅ Connected to MongoDB successfully");
+    } catch (err) {
+        console.error("❌ MongoDB connection error:", err);
+        console.log("Retrying connection in 5 seconds...");
+        setTimeout(connectWithRetry, 5000);
+    }
+};
+
+// Start the connection process
+connectWithRetry();
+
+// Connection event listeners
+mongoose.connection.on('connected', () => {
+    console.log('Mongoose connected to MongoDB');
+});
+
+mongoose.connection.on('error', (err) => {
+    console.error('Mongoose connection error:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+    console.log('Mongoose disconnected from MongoDB');
+    console.log("Attempting to reconnect...");
+    connectWithRetry();
+});
 
 // Debug middleware
 app.use((req, res, next) => {
@@ -110,10 +146,6 @@ function verifyToken(req, res, next) {
         res.status(400).json({ message: "Invalid Token" });
     }
 }
-
-// MongoDB connection with detailed error handling
-
-
 
 // ✅ Start server
 const PORT = process.env.PORT || 5000;
